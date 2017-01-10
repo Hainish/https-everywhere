@@ -1,29 +1,13 @@
 <!--
-	Fully covered subdomains:
-		- mega.co.nz
-			- (www.)
-			- \w\w.api
-			- \w\w.static *
-			- \w+.userstorage *
-			- g.cdn1
-
-		- mega.nz
-			- (www.)
-			- cms
+	HSTS Preloaded:
+		- mega.nz    (removed from ruleset)
+		- mega.co.nz (doesn't have `include_subdomains`)
 -->
 <ruleset name="Mega">
-
 	<target host="*.mega.co.nz" />
-
 	<test url="http://eu.static.mega.co.nz/" />
-	<test url="http://cms.mega.nz/" />
 
-	<!--	Not secured by server:
-					-->
-	<!--securecookie host="^mega\.co\.nz$" name="^geoip$" /-->
-	<securecookie host="^mega\.(co\.)?nz$" name=".+" />
+	<securecookie host=".+" name=".+" />
 
-	<rule from="^http:"
-		to="https:" />
-
+	<rule from="^http:"	to="https:" />
 </ruleset>
