@@ -7,6 +7,9 @@
             "rules.js", 
             "storage.js", 
             "util.js", 
+            "pako_inflate.min.js",
+            "keys.js",
+            "update.js",
             "background.js", 
             "incognito-cache-clearing.js"
         ]
