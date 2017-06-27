@@ -1,225 +1,169 @@
-"use strict";
+'use strict'
 
 // Rules are loaded here
-var all_rules;
+let all_rules = null
 
 // how often we should check for new rulesets
-let periodicity = 10;
+const periodicity = 10
 
 // jwk key loaded from keys.js
-let imported_keys = {};
-for(let update_channel of update_channels){
-  imported_keys[update_channel.name] = window.crypto.subtle.importKey(
-    "jwk",
-    update_channel.jwk,
-    {
-      name: "RSASSA-PKCS1-v1_5",
-      hash: {name: "SHA-256"},
-    },
-    false,
-    ["verify"]
-  );
-}
+const imported_keys = {}
 
-
-// Get an object stored in localstorage
-var getStoredLocalObject = object_key => {
-  return new Promise(resolve => {
-    chrome.storage.local.get(object_key, root => {
-      resolve(root[object_key]);
-    });
-  });
-};
-
-// Get an object stored in localstorage
-var setStoredLocalObject = (object_key, object_value) => {
-  return new Promise(resolve => {
-    var object = {};
-    object[object_key] = object_value;
-    chrome.storage.local.set(object, () => {
-      resolve();
-    });
-  });
-};
-
-// Determine the time until we should check for new rulesets
-async function timeToNextCheck() {
-  let last_checked = await getStoredLocalObject('last-checked');
-  if(last_checked === undefined) {
-    return 0;
-  } else {
-    let current_timestamp = Date.now() / 1000;
-    let secs_since_last_checked = current_timestamp - last_checked;
-    return Math.max(0, periodicity - secs_since_last_checked);
+async function importKeys() {
+  for(const update_channel of update_channels) {
+    imported_keys[update_channel.name] = await window.crypto.subtle.importKey(
+      "jwk",
+      update_channel.jwk,
+      {
+        name: "RSASSA-PKCS1-v1_5",
+        hash: {name: "SHA-256"},
+      },
+      false,
+      ["verify"]
+    );
   }
 }
 
-// Generic ajax promise
-let xhr_promise = url => {
-  return new Promise((resolve, reject) => {
-    let xhr = new XMLHttpRequest();
-    xhr.open("GET", url);
-    xhr.onreadystatechange = function(){
-      if(this.readyState == 4 && this.status == 200) {
-        resolve(this.response);
-      }
-    }
-    xhr.responseType = "text";
-    xhr.send(null);
-  });
+// Waits ms milliseconds.
+const delay = ms => new Promise(resolve => setTimeout(resolve, ms))
+
+// Get an object stored in localstorage
+const getStoredLocalObject = object_key => new Promise(resolve => 
+  chrome.storage.local.get(object_key, root => resolve(root[object_key]))
+);
+
+// Set an object stored in localstorage
+const setStoredLocalObject = (object_key, object_value) => new Promise(resolve => {
+  const object = {}
+  object[object_key] = object_value
+  chrome.storage.local.set(object, resolve)
+});
+
+// Determine the time until we should check for new rulesets
+async function timeToNextCheck() {
+  const last_checked = await getStoredLocalObject('last-checked')
+  if(last_checked === undefined) {
+    return 0
+  } else {
+    const current_timestamp = Date.now() / 1e3
+    const secs_since_last_checked = current_timestamp - last_checked
+    return Math.max(0, periodicity - secs_since_last_checked)
+  }
 }
 
 // Check for new rulesets. If found, return the timestamp. If not, return false
 async function checkForNewRulesets(update_channel) {
 
-  let timestamp_promise = xhr_promise(update_channel.update_path_prefix + "/rulesets-timestamp");
-  let rulesets_timestamp = Number(await timestamp_promise);
+  const rulesets_timestamp = (await fetch(update_channel.update_path_prefix + "/rulesets-timestamp")).json()
 
   if((await getStoredLocalObject('rulesets-timestamp: ' + update_channel.name) || 0) < rulesets_timestamp){
-    return rulesets_timestamp;
+    return rulesets_timestamp
   } else {
-    return false;
+    return false
   }
 }
 
 // Download and return new rulesets
 async function getNewRulesets(rulesets_timestamp, update_channel) {
 
-  setStoredLocalObject('rulesets-timestamp: ' + update_channel.name, rulesets_timestamp);
+  setStoredLocalObject('rulesets-timestamp: ' + update_channel.name, rulesets_timestamp)
 
-  let signature_promise = xhr_promise(update_channel.update_path_prefix + "/rulesets-signature.sha256.base64");
-  let rulesets_promise = xhr_promise(update_channel.update_path_prefix + "/default.rulesets.gz.base64");
-
-  let resolutions = await Promise.all([
-    signature_promise,
-    rulesets_promise
-  ]);
+  const signature = (await fetch(update_channel.update_path_prefix + "/default.rulesets")).text()
+  const rulesets = (await fetch(update_channel.update_path_prefix + "/rulesets-signature.sha256")).text()
 
   return {
-    signature_byte_array: base64ToUint8Array(resolutions[0]),
-    rulesets_byte_array: stringToUint8Array(resolutions[1]),
-    rulesets_gz_base64: resolutions[1]
-  };
+    'signature': signature,
+    'rulesets': rulesets
+  }
 }
 
 // Returns a promise which verifies that the rulesets have a valid EFF
 // signature, and if so, stores them and returns true.
 // Otherwise, it throws an exception.
-function verifyAndStoreNewRulesets(new_rulesets, update_channel){
-  return new Promise((resolve, reject) => {
-    imported_keys[update_channel.name].then(publicKey => {
-      window.crypto.subtle.verify(
-        {
-          name: "RSASSA-PKCS1-v1_5",
-        },
-        publicKey,
-        new_rulesets.signature_byte_array.buffer,
-        new_rulesets.rulesets_byte_array.buffer
-      )
-      .then(async isvalid => {
-        if(isvalid) {
-          console.log('INFO', update_channel.name + ': Downloaded ruleset signature checks out.  Storing rulesets.');
-          await setStoredLocalObject('rulesets: ' + update_channel.name, new_rulesets.rulesets_gz_base64);
-          resolve(true);
-        } else {
-          reject('Downloaded ruleset signature is invalid.  Aborting.');
-        }
-      })
-      .catch(err => {
-        reject('Downloaded ruleset signature could not be verified.  Aborting.');
-      });
-    })
-    .catch(err => {
-      reject('Downloaded ruleset signature could not be verified.  Aborting.');
-    });
-  });
+
+async function verifyAndStoreNewRulesets(new_rulesets, update_channel){
+  const key = await imported_keys[update_channel.name]
+
+  const isValid = await window.crypto.subtle.verify({ name:'RSASSA-PKCS1-v1_5' }, publicKey, new_rulesets.signature, new_rulesets.rulesets)
+
+  if (!isValid)
+  {
+    throw new Exception('Downloaded ruleset signature is invalid.')
+  }
+
+  console.log('INFO', update_channel.name + ': Downloaded ruleset signature checks out. Storing rulesets.')
+
+  await setStoredLocalObject('rulesets: ' + update_channel.name, new_rulesets.rulesets)
+
+  return true
 }
 
-// Base64 decode, unzip, and apply the rulesets we have stored.
-async function applyStoredRulesets(){
-  let rulesets_promises = [];
-  for(let update_channel of update_channels){
-    rulesets_promises.push(new Promise(resolve => {
-      let key = 'rulesets: ' + update_channel.name
-      chrome.storage.local.get(key, root => {
-        if(root[key]){
-          console.log('INFO', update_channel.name + ': Applying stored rulesets.');
+// Apply the rulesets we have stored.
+async function applyStoredRulesets() {
+  all_rules = new RuleSets(localStorage)
 
-          let rulesets_gz = window.atob(root[key]);
-          let rulesets_byte_array = pako.inflate(rulesets_gz);
-          let rulesets = new TextDecoder("utf-8").decode(rulesets_byte_array);
-          let rulesets_xml = (new DOMParser()).parseFromString(rulesets, "text/xml");
+  for (const update_channel of update_channels) {
+      const key = 'rulesets: ' + update_channel.name
+      const rulesets = await getStoredLocalObject(key)
+      if (rulesets) {
+        console.log('INFO', update_channel.name + ': Applying stored rulesets.')
 
-          resolve(rulesets_xml);
-        } else {
-          resolve();
-        }
-      });
-    }));
+        const rulesets_xml = (new DOMParser()).parseFromString(rulesets, "text/xml")
+
+        all_rules.addFromXml(rulesets_xml, 'xml')
+      }
   }
 
-  let rulesets_xmls = await Promise.all(rulesets_promises);
-  if(rulesets_xmls.join("").length > 0){
-    all_rules = new RuleSets(localStorage);
-    for(let rulesets_xml of rulesets_xmls){
-      all_rules.addFromXml(rulesets_xml, 'xml');
-    }
-    loadStoredUserRules();
-  }
+  loadStoredUserRules()
 }
-
-/*
-async function storeUpdateObjects() {
-  let local_update_channels = await getStoredLocalObject('update-channels');
-  if(local_update_channels == undefined){
-    let update_promises = [];
-    let update_channels_array = [];
-    for(let update_channel of update_channels){
-      update_promises.push(setStoredLocalObject(
-        'update-channel-' + update_channel.name,
-        update_channels
-      ));
-
-      update_channels_array.push(update_channel.name);
-    }
-
-    update_promises.push(setStoredLocalObject('update-channels', update_channels_array));
-    await Promise.all(update_promises);
-  }
-}*/
 
 // basic workflow for periodic checks
 async function performCheck() {
-  console.log('INFO', 'Checking for new rulesets.');
+  console.log('INFO', 'Checking for new rulesets.')
 
-  let current_timestamp = Date.now() / 1000;
-  setStoredLocalObject('last-checked', current_timestamp);
+  const current_timestamp = Date.now() / 1e3
+  await setStoredLocalObject('last-checked', current_timestamp)
 
-  for(let update_channel of update_channels){
-    let new_rulesets_timestamp = await checkForNewRulesets(update_channel);
-    if(new_rulesets_timestamp){
-      console.log('INFO', update_channel.name + ': A new ruleset bundle has been released.  Downloading now.');
-      let new_rulesets = await getNewRulesets(new_rulesets_timestamp, update_channel);
-      try{
-        await verifyAndStoreNewRulesets(new_rulesets, update_channel);
-      } catch(err) {
-        console.log('WARN', update_channel.name + ': ' + err);
-      }
+  for (const update_channel of update_channels) {
+    const new_rulesets_timestamp = await checkForNewRulesets(update_channel)
+    if (new_rulesets_timestamp) {
+      console.log('INFO', update_channel.name + ': A new ruleset bundle has been released.  Downloading now.')
+      const new_rulesets = await getNewRulesets(new_rulesets_timestamp, update_channel)
+      await verifyAndStoreNewRulesets(new_rulesets, update_channel)
+      await applyStoredRulesets()
     }
   }
-  applyStoredRulesets();
 };
 
+async function updateLoop() {
+  while (true)
+  {
+    try {
+      await performCheck()
+    } catch (e) {
+      console.log('ERROR', e)
+    }
 
-async function setUpRulesetsTimer(){
-  let time_to_next_check = await timeToNextCheck();
+    let time_to_next_check
+    try {
+      time_to_next_check = await timeToNextCheck()
+    } catch (e) {
+      console.log('ERROR', e)
+      console.log('ERROR', 'timeToNextCheck() failed, waiting ' + periodicity + 'seconds.')
 
-  setTimeout(() => {
-    performCheck();
-    setInterval(performCheck, periodicity * 1000);
-  }, time_to_next_check * 1000);
+      time_to_next_check = periodicity
+    }
+
+    await delay(time_to_next_check * 1e3)
+  }
 }
 
+async function begin() {
+  await importKeys()
 
-applyStoredRulesets();
-setUpRulesetsTimer();
+  await applyStoredRulesets()
+
+  await updateLoop()
+}
+
+begin()
