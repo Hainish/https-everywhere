@@ -54,7 +54,7 @@ async function timeToNextCheck() {
 // Check for new rulesets. If found, return the timestamp. If not, return false
 async function checkForNewRulesets(update_channel) {
 
-  const rulesets_timestamp = (await fetch(update_channel.update_path_prefix + "/rulesets-timestamp")).json()
+  const rulesets_timestamp = await (await fetch(update_channel.update_path_prefix + "/rulesets-timestamp")).json()
 
   if((await getStoredLocalObject('rulesets-timestamp: ' + update_channel.name) || 0) < rulesets_timestamp){
     return rulesets_timestamp
@@ -68,8 +68,8 @@ async function getNewRulesets(rulesets_timestamp, update_channel) {
 
   setStoredLocalObject('rulesets-timestamp: ' + update_channel.name, rulesets_timestamp)
 
-  const signature = (await fetch(update_channel.update_path_prefix + "/default.rulesets")).text()
-  const rulesets = (await fetch(update_channel.update_path_prefix + "/rulesets-signature.sha256")).text()
+  const signature = await (await fetch(update_channel.update_path_prefix + "/default.rulesets")).arrayBuffer()
+  const rulesets = await (await fetch(update_channel.update_path_prefix + "/rulesets-signature.sha256")).arrayBuffer()
 
   return {
     'signature': signature,
@@ -93,7 +93,9 @@ async function verifyAndStoreNewRulesets(new_rulesets, update_channel){
 
   console.log('INFO', update_channel.name + ': Downloaded ruleset signature checks out. Storing rulesets.')
 
-  await setStoredLocalObject('rulesets: ' + update_channel.name, new_rulesets.rulesets)
+  const rulesets_string = (new TextDecoder()).decode(new_rulesets.rulesets)
+  
+  await setStoredLocalObject('rulesets: ' + update_channel.name, rulesets_string)
 
   return true
 }
