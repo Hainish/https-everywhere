@@ -1,4 +1,4 @@
-let update_channels = [{
+const update_channels = [{
   name: "EFF Full Rulesets",
   jwk: {
     kty: "RSA",
