@@ -10,7 +10,7 @@ const periodicity = 10
 const imported_keys = {}
 
 async function importKeys() {
-  for(const update_channel of update_channels) {
+  for (const update_channel of update_channels) {
     imported_keys[update_channel.name] = await window.crypto.subtle.importKey(
       "jwk",
       update_channel.jwk,
